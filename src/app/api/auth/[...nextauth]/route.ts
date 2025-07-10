@@ -1,105 +1,80 @@
 import NextAuth, { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
+import { createClient } from '@supabase/supabase-js';
+
 import { SignInSchema } from '@/lib/schemas';
 
-// --- MOCK DATABASE ---
-// In a real application, you would fetch this from a database like Supabase or Firebase.
-const users = [
-  { id: '1', name: 'Admin User', email: 'admin@example.com', password: 'password123' },
-];
-// --------------------
+// The mock 'users' array is now permanently removed. We use the database as the source of truth.
 
-/**
- * Configuration options for NextAuth.js.
- * @see https://next-auth.js.org/configuration/options
- */
 export const authOptions: NextAuthOptions = {
-  /**
-   * Configure one or more authentication providers.
-   * We are using the Credentials provider for email/password sign-in.
-   * @see https://next-auth.js.org/providers/credentials
-   */
   providers: [
     CredentialsProvider({
-      // The name to display on the sign-in form (e.g., 'Sign in with...')
       name: 'Credentials',
-      
-      // `credentials` is used to generate a form on the default sign-in page.
-      // We don't use the default page, but it's good practice to define the shape.
       credentials: {
         email: { label: "Email", type: "text" },
         password: { label: "Password", type: "password" }
       },
-
+      
       /**
-       * The authorize callback is where you retrieve a user from your database
-       * and verify their credentials.
-       * @param credentials The credentials submitted by the user.
-       * @returns A user object or null if authentication fails.
+       * The new authorize function. It no longer uses a mock array.
+       * It attempts to sign in the user using Supabase's own auth functions.
        */
       async authorize(credentials) {
-        // If credentials are not provided, authentication cannot proceed.
-        if (!credentials) {
+        if (!credentials?.email || !credentials?.password) {
           return null;
         }
 
-        // Validate the incoming credentials against our Zod schema.
-        const validatedFields = SignInSchema.safeParse(credentials);
-        
-        if (validatedFields.success) {
-          const { email, password } = validatedFields.data;
-          
-          // Find the user in our mock database.
-          const user = users.find((u) => u.email === email);
+        // Create a Supabase client for this authorization check.
+        // NOTE: In a real production app, you might want to use the service_role key
+        // for more complex checks, but for signInWithPassword, the anon key is sufficient
+        // if your RLS policies are set up correctly. For simplicity, we use the public keys.
+        const supabase = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        );
 
-          // IMPORTANT: In a production app, NEVER compare plain text passwords.
-          // You should hash passwords during sign-up and use a library like `bcrypt`
-          // to compare the submitted password with the stored hash.
-          // e.g., const passwordsMatch = await bcrypt.compare(password, user.password);
-          if (user && user.password === password) {
-            
-            // If the user is found and the password is correct, return the user object
-            // without the password hash.
-            const { password: _, ...userWithoutPassword } = user;
-            return userWithoutPassword;
-          }
+        // First, try to sign in the user with their email and password using Supabase Auth.
+        // This validates their credentials against the `auth.users` table.
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email: credentials.email,
+          password: credentials.password,
+        });
+
+        // If Supabase returns an error or no user, the credentials are bad.
+        if (authError || !authData.user) {
+          console.error("Supabase auth error:", authError?.message);
+          return null;
         }
         
-        // If authentication fails for any reason, return null.
-        // NextAuth will then reject the sign-in attempt.
+        // If authentication is successful, fetch the user's profile from our public `profiles` table.
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', authData.user.id)
+            .single();
+        
+        // If a profile exists, return a user object that next-auth can use.
+        if (profile) {
+            return {
+                id: profile.id,
+                name: profile.name,
+                email: profile.email,
+            };
+        }
+        
+        // If no profile is found for a valid user, something is wrong. Reject the session.
         return null;
       }
     })
   ],
-
-  /**
-   * Callbacks are asynchronous functions you can use to control what happens
-   * when an action is performed.
-   * @see https://next-auth.js.org/configuration/callbacks
-   */
+  // The rest of your configuration remains the same.
   callbacks: {
-    /**
-     * The `jwt` callback is called whenever a JSON Web Token is created or updated.
-     * We use this to persist the user's ID from the `user` object to the `token`.
-     * @param token The token object.
-     * @param user The user object from the `authorize` callback (only available on initial sign-in).
-     * @returns The updated token.
-     */
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
       }
       return token;
     },
-
-    /**
-     * The `session` callback is called whenever a session is checked.
-     * We use this to pass our custom data from the token to the session object,
-     * making it available on the client-side.
-     * @param session The session object.
-     * @param token The token from the `jwt` callback.
-     * @returns The updated session object.
-     */
     async session({ session, token }) {
       if (token && session.user) {
         session.user.id = token.id as string;
@@ -107,32 +82,15 @@ export const authOptions: NextAuthOptions = {
       return session;
     },
   },
-
-  /**
-   * Specifies the session strategy. 'jwt' is the default and recommended strategy.
-   */
   session: {
     strategy: 'jwt',
   },
-
-  /**
-   * Defines custom pages for authentication actions.
-   */
   pages: {
     signIn: '/sign-in',
-    // You can also define pages for sign-out, error, etc.
-    // error: '/auth/error', 
   },
-
-  /**
-   * A secret used to sign and encrypt JWTs, sign cookies, and generate cryptographic keys.
-   * This is sourced from your `.env.local` file.
-   */
   secret: process.env.NEXTAUTH_SECRET,
 };
 
-// Initialize NextAuth.js with the defined options.
 const handler = NextAuth(authOptions);
 
-// Export the handler for Next.js to use for GET and POST requests to this route.
 export { handler as GET, handler as POST };

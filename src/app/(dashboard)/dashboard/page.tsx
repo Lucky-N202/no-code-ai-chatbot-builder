@@ -1,35 +1,26 @@
-import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PlusCircle, Bot, MessageSquare, Pencil, Trash, ExternalLink } from 'lucide-react';
 import Link from 'next/link';
 import { v4 as uuidv4 } from 'uuid';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 
-// MOCK: Fetch user's bots from a database in a real app
-const getUserBots = async (userId: string) => {
-  return [
-    { id: 'bot-123', name: 'Sales Bot', messageCount: 150 },
-    { id: 'bot-456', name: 'Support Bot', messageCount: 420 },
-    { id: 'demo-bot', name: 'Public Demo Bot', messageCount: 999 },
-  ];
-};
+// Import our new server action for fetching bots
+import { getUserBots } from '@/app/actions/botActions';
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
- if (!session?.user?.id) {
-    // Note: The middleware should handle redirection, but this is a safeguard.
-    // In v4, the user object might not have an `id` by default unless you add it in the JWT callback.
-    // For this demo, checking for `session.user` is sufficient.
-    return <p>Access Denied. Please sign in.</p>;
-  }
+  if (!session?.user) return null;
 
-    const bots = await getUserBots("mock-user-id");
+  // Replace mock function with a direct call to our server action
+  const bots = await getUserBots();
 
   return (
     <div className="container mx-auto py-8">
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold">Welcome back, {session.user.name}!</h1>
+        {/* The link now creates a new UUID for a new bot */}
         <Button asChild>
           <Link href={`/builder/${uuidv4()}`}><PlusCircle className="mr-2 h-4 w-4" /> Create New Bot</Link>
         </Button>
@@ -48,7 +39,8 @@ export default async function DashboardPage() {
             <CardTitle className="text-sm font-medium">Total Messages</CardTitle>
             <MessageSquare className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
-          <CardContent><div className="text-2xl font-bold">{bots.reduce((sum, bot) => sum + bot.messageCount, 0)}</div></CardContent>
+          {/* Note: messageCount is not on our bot model yet, so we'll mock this for now */}
+          <CardContent><div className="text-2xl font-bold">0</div></CardContent>
         </Card>
       </div>
 
@@ -70,10 +62,11 @@ export default async function DashboardPage() {
                     <Link href={`/embed/${bot.id}`} target="_blank"><ExternalLink className="h-4 w-4" /></Link>
                   </Button>
                   <Button variant="outline" size="sm" asChild><Link href={`/builder/${bot.id}`}><Pencil className="h-4 w-4 mr-2" /> Edit</Link></Button>
+                  {/* The delete button still needs its own server action */}
                   <Button variant="destructive" size="sm"><Trash className="h-4 w-4 mr-2" /> Delete</Button>
                 </div>
               </div>
-            )) : <p className="text-center text-muted-foreground">You haven't created any bots yet.</p>}
+            )) : <p className="text-center text-muted-foreground">You haven't created any bots yet. Click "Create New Bot" to get started!</p>}
           </div>
         </CardContent>
       </Card>

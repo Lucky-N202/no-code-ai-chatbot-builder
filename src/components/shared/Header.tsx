@@ -23,6 +23,11 @@ export default function Header() {
             <Link href="/pricing" className="transition-colors hover:text-foreground/80 text-foreground/60">
                 Pricing
             </Link>
+            {/* 
+              This button calls the signOut function from next-auth.
+              The `callbackUrl` tells Next.js where to redirect the user AFTER
+              they have been successfully signed out. The homepage is a perfect destination.
+            */}
             <Button variant="outline" size="sm" onClick={() => signOut({ callbackUrl: '/' })}>
                 <LogOut className="h-4 w-4 mr-2"/>
                 Sign Out
