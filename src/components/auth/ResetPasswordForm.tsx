@@ -1,4 +1,3 @@
-// components/auth/ResetPasswordForm.tsx
 'use client';
 
 import { useForm } from 'react-hook-form';
@@ -9,6 +8,7 @@ import { toast } from "sonner";
 import { useRouter } from 'next/navigation';
 
 import { supabase } from '@/lib/supabase';
+import { signOut } from 'next-auth/react'; // Import the signOut function from next-auth
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -20,18 +20,20 @@ export function ResetPasswordForm() {
   const [isTokenValid, setIsTokenValid] = useState(false);
   const [hasCheckedToken, setHasCheckedToken] = useState(false);
 
-  // When the component mounts, Supabase client automatically detects the password
-  // recovery token from the URL hash and establishes a session.
+  /**
+   * This effect runs when the component mounts. The Supabase client library
+   * automatically parses the URL hash for a password recovery token.
+   * If found, it establishes a temporary session and fires the 'PASSWORD_RECOVERY' event.
+   */
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      // This event fires when the user arrives from the email link.
       if (event === 'PASSWORD_RECOVERY') {
         setIsTokenValid(true);
       }
       setHasCheckedToken(true);
     });
 
-    // Clean up the subscription when the component unmounts.
+    // It's important to unsubscribe from the listener when the component unmounts.
     return () => subscription.unsubscribe();
   }, []);
 
@@ -40,52 +42,84 @@ export function ResetPasswordForm() {
     defaultValues: { password: '' },
   });
 
+  /**
+   * Handles the form submission to update the user's password.
+   */
   async function onSubmit(values: z.infer<typeof ResetPasswordSchema>) {
     if (!isTokenValid) {
-        toast.error("Invalid or expired link", { description: "Please request a new password reset link." });
+        toast.error("Invalid or expired link", { 
+          description: "Please request a new password reset link." 
+        });
         return;
     }
 
     setIsLoading(true);
-    // This client-side function from Supabase uses the session established by the token
-    // to securely update the user's password.
-    const { error } = await supabase.auth.updateUser({
+    
+    // Step 1: Update the user's password in the Supabase database.
+    // This function uses the temporary session established by the recovery token.
+    const { error: updateError } = await supabase.auth.updateUser({
       password: values.password,
     });
 
-    if (error) {
-      toast.error("Failed to reset password", { description: error.message });
+    if (updateError) {
+      toast.error("Failed to reset password", { description: updateError.message });
+      setIsLoading(false);
     } else {
-      toast.success("Password Updated!", {
-        description: "Your password has been successfully reset. Please sign in with your new password.",
+      toast.success("Password Updated Successfully!", {
+        description: "You will now be redirected to the sign-in page.",
       });
-      // Redirect to the sign-in page after a short delay to allow the user to read the toast.
-      setTimeout(() => router.push('/sign-in'), 2000);
+
+      // --- THE FIX: Invalidate all sessions to ensure a clean state ---
+
+      // Step 2: Sign the user out of their temporary Supabase session.
+      await supabase.auth.signOut();
+
+      // Step 3: Sign the user out of their `next-auth` session.
+      await signOut({ redirect: false });
+      
+      // Step 4: Manually redirect to the sign-in page for a fresh login.
+      router.push('/sign-in');
     }
-    setIsLoading(false);
   }
 
-  // Show a loading state until the token has been processed.
+  // Display a loading message while the Supabase client checks the token.
   if (!hasCheckedToken) {
-    return <div className="text-center">Verifying reset link...</div>;
+    return <div className="text-center text-sm text-muted-foreground">Verifying link...</div>;
   }
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-        <FormField name="password" control={form.control} render={({ field }) => (
-          <FormItem>
-            <FormLabel>New Password</FormLabel>
-            <FormControl><Input type="password" placeholder="********" {...field} /></FormControl>
-            <FormMessage />
-          </FormItem>
-        )} />
-        <Button type="submit" className="w-full" disabled={isLoading || !isTokenValid}>
-            {isLoading ? "Updating Password..." : "Update Password"}
+        <FormField 
+          name="password" 
+          control={form.control} 
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>New Password</FormLabel>
+              <FormControl>
+                <Input 
+                  type="password" 
+                  placeholder="********" 
+                  {...field} 
+                  disabled={!isTokenValid} // Disable input if the token is invalid
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )} 
+        />
+        <Button 
+          type="submit" 
+          className="w-full" 
+          disabled={isLoading || !isTokenValid}
+        >
+          {isLoading ? "Updating Password..." : "Update Password"}
         </Button>
+        
+        {/* Display an error message if the token was checked and found to be invalid */}
         {!isTokenValid && hasCheckedToken && (
             <p className="text-center text-sm text-destructive">
-                This password reset link is invalid or has expired.
+                This password reset link is invalid or has expired. Please request a new one.
             </p>
         )}
       </form>

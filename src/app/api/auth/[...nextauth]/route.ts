@@ -2,11 +2,14 @@ import NextAuth, { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { createClient } from '@supabase/supabase-js';
 
-import { SignInSchema } from '@/lib/schemas';
-
-// The mock 'users' array is now permanently removed. We use the database as the source of truth.
-
+/**
+ * Configuration options for NextAuth.js. This is the single source of truth for
+ * all authentication logic, using the `next-auth` v4 paradigm.
+ */
 export const authOptions: NextAuthOptions = {
+  // We are not using a database adapter here to maintain full control over the
+  // user authentication flow and ensure the correct Supabase user ID is always used.
+  
   providers: [
     CredentialsProvider({
       name: 'Credentials',
@@ -16,65 +19,86 @@ export const authOptions: NextAuthOptions = {
       },
       
       /**
-       * The new authorize function. It no longer uses a mock array.
-       * It attempts to sign in the user using Supabase's own auth functions.
+       * The authorize callback is the heart of our credentials-based authentication.
+       * It validates user credentials against our Supabase database.
        */
       async authorize(credentials) {
+        console.log("\n--- [Server] `authorize` function triggered ---");
+
         if (!credentials?.email || !credentials?.password) {
+          console.error("[Server] Authorize failed: Credentials not provided.");
           return null;
         }
+        console.log(`[Server] Received credentials for email: ${credentials.email}`);
 
-        // Create a Supabase client for this authorization check.
-        // NOTE: In a real production app, you might want to use the service_role key
-        // for more complex checks, but for signInWithPassword, the anon key is sufficient
-        // if your RLS policies are set up correctly. For simplicity, we use the public keys.
+        // Create a temporary Supabase client to perform the sign-in check.
         const supabase = createClient(
           process.env.NEXT_PUBLIC_SUPABASE_URL!,
           process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
         );
 
-        // First, try to sign in the user with their email and password using Supabase Auth.
-        // This validates their credentials against the `auth.users` table.
+        console.log("[Server] Attempting to sign in with Supabase Auth...");
+        // Step 1: Use Supabase's built-in function to verify the user's password.
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
           email: credentials.email,
           password: credentials.password,
         });
 
-        // If Supabase returns an error or no user, the credentials are bad.
         if (authError || !authData.user) {
-          console.error("Supabase auth error:", authError?.message);
-          return null;
+          console.error("[Server] Supabase auth failed:", authError?.message || "No user returned from Supabase.");
+          return null; // This tells next-auth the login is invalid.
         }
-        
-        // If authentication is successful, fetch the user's profile from our public `profiles` table.
-        const { data: profile } = await supabase
+        console.log(`[Server] Supabase auth successful. User ID: ${authData.user.id}`);
+
+        // Step 2: Fetch the user's profile from our public `profiles` table.
+        console.log(`[Server] Fetching profile for user: ${authData.user.id}`);
+        const { data: profile, error: profileError } = await supabase
             .from('profiles')
             .select('*')
             .eq('id', authData.user.id)
             .single();
         
-        // If a profile exists, return a user object that next-auth can use.
-        if (profile) {
-            return {
-                id: profile.id,
-                name: profile.name,
-                email: profile.email,
-            };
+        if (profileError || !profile) {
+            console.error("[Server] Profile fetch failed:", profileError?.message || "Profile not found in 'profiles' table.");
+            return null; // A valid user MUST have a profile.
         }
         
-        // If no profile is found for a valid user, something is wrong. Reject the session.
-        return null;
+        console.log("[Server] Profile found:", profile);
+        console.log("[Server] Returning user object to next-auth to create session.");
+        
+        // Step 3: Return the final user object for next-auth to use.
+        // This object's shape is what gets passed to the JWT callback.
+        return {
+            id: profile.id, // The REAL Supabase user ID
+            name: profile.name,
+            email: profile.email,
+        };
       }
     })
   ],
-  // The rest of your configuration remains the same.
+  
+  session: {
+    // We must use JWT as the session strategy to handle custom callbacks.
+    strategy: 'jwt',
+  },
+
   callbacks: {
+    /**
+     * The `jwt` callback is executed when a token is created.
+     * We persist the real Supabase user ID to the token here.
+     */
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
       }
       return token;
     },
+    
+    /**
+     * The `session` callback is executed when a session is accessed.
+     * We transfer the user ID from the token to the session object, making it
+     * available to both client and server components via `getSession` or `useSession`.
+     */
     async session({ session, token }) {
       if (token && session.user) {
         session.user.id = token.id as string;
@@ -82,15 +106,16 @@ export const authOptions: NextAuthOptions = {
       return session;
     },
   },
-  session: {
-    strategy: 'jwt',
-  },
+
   pages: {
     signIn: '/sign-in',
   },
+  
   secret: process.env.NEXTAUTH_SECRET,
 };
 
+// Create the main NextAuth handler with our options.
 const handler = NextAuth(authOptions);
 
+// Export the handler for both GET and POST requests, as required by Next.js.
 export { handler as GET, handler as POST };

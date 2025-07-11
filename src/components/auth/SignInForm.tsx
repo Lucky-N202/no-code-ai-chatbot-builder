@@ -25,6 +25,8 @@ export function SignInForm() {
 
   async function onSubmit(values: z.infer<typeof SignInSchema>) {
     setIsLoading(true);
+     console.log("1. [Client] Form submitted with values:", values);
+
     try {
       const result = await signIn('credentials', {
         redirect: false,
@@ -32,18 +34,22 @@ export function SignInForm() {
         password: values.password,
       });
 
+       console.log("2. [Client] `signIn` function returned:", result); 
+
       if (result?.error) {
-        toast.error("Login Failed", {
+         console.error("3. [Client] Login failed. Error:", result.error);
+        toast.error("Login Failed", {  
           description: "Invalid credentials. Please try again.",
         });
          setIsLoading(false);
       } else {
+          console.log("4. [Client] Login successful. Redirecting...");
         toast.success("Success!", {
           description: "You have been successfully signed in.",
         });
        // FIX: Use a hard navigation to the dashboard.
       window.location.href = '/dashboard';
-        router.refresh(); // Important to update server session state
+
       }
     } catch (error) {
        console.error("Sign in error", error)
